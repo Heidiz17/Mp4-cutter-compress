@@ -13,7 +13,6 @@
         .upload-zone { border: 2px dashed #3a3f68; border-radius: 8px; padding: 16px; text-align: center; cursor: pointer; margin-bottom: 12px; background: #0d0f1a; font-size: 12px; }
         input[type="file"] { display: none; }
 
-        /* 實時取景監視器（固定外框比例，居中對齊） */
         .viewport-wrapper {
             position: relative;
             width: 240px;
@@ -43,7 +42,7 @@
             position: absolute;
             width: 100%;
             height: 100%;
-            object-fit: contain; /* 完整原汁原味展示，不強制外拉放大 */
+            object-fit: contain;
             transform-origin: center center;
             will-change: transform;
         }
@@ -80,11 +79,10 @@
     </h2>
 
     <div class="upload-zone" onclick="document.getElementById('videoInput').click()">
-        <p id="uploadPrompt">📁 點擊選取你二百幾 MB 嘅 MP4 影片</p>
+        <p id="uploadPrompt">📁 點擊選取原裝 MP4 影片</p>
         <input type="file" id="videoInput" accept="video/*" onchange="handleVideoUpload(event)">
     </div>
 
-    <!-- 實時預覽監視器 (已移除 loop，單次完整播放) -->
     <div class="viewport-wrapper" id="viewportWrap">
         <div id="videoContainer">
             <video id="rawVideo" playsinline controls></video>
@@ -92,7 +90,6 @@
         <canvas id="cropCanvas"></canvas>
     </div>
 
-    <!-- 剪裁形狀與解析度 (預設 720p 穩陣極速) -->
     <div class="control-group">
         <div class="row">
             <label>最終輸出比例：</label>
@@ -105,13 +102,12 @@
         <div class="row">
             <label>輸出規格：</label>
             <select id="resSelect">
-                <option value="720" selected>720p (推薦！順滑清晰且不爆 RAM)</option>
-                <option value="1080">1080p (超清大畫面)</option>
+                <option value="720" selected>720p (推薦！順滑清晰)</option>
+                <option value="1080">1080p (高畫質)</option>
             </select>
         </div>
     </div>
 
-    <!-- 手動剪裁與放大控制項 -->
     <div class="control-group">
         <div style="font-weight:bold; color:#00ffcc; margin-bottom:6px;">🔍 鏡頭縮放與畫面剪裁（剪 Q 側邊）：</div>
         <div class="row">
@@ -131,7 +127,6 @@
         </div>
     </div>
 
-    <!-- 音量與壓製碼率 -->
     <div class="control-group">
         <div class="row">
             <label>🔊 影片音量 (Volume):</label>
@@ -153,7 +148,7 @@
     </div>
 
     <div class="download-box" id="downloadBox">
-        <a id="downloadLink" class="btn-download" download="focus_cut_output.mp4">💾 下載已剪裁壓縮檔案</a>
+        <a id="downloadLink" class="btn-download" download="output_video">💾 下載已剪裁檔案</a>
     </div>
 </div>
 
@@ -247,57 +242,79 @@
         cropCanvas.width = outW;
         cropCanvas.height = outH;
 
-        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        const sourceNode = audioCtx.createMediaElementSource(rawVideo);
-        const gainNode = audioCtx.createGain();
-        gainNode.gain.value = parseFloat(document.getElementById('volRange').value) / 100;
-        
-        const destNode = audioCtx.createMediaStreamDestination();
-        sourceNode.connect(gainNode);
-        gainNode.connect(destNode);
-        gainNode.connect(audioCtx.destination);
-
+        // 捕捉視訊流
         const canvasStream = cropCanvas.captureStream(30);
-        if (destNode.stream.getAudioTracks().length > 0) {
-            canvasStream.addTrack(destNode.stream.getAudioTracks()[0]);
+
+        // 嘗試捕獲音訊
+        try {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') {
+                await audioCtx.resume();
+            }
+            const sourceNode = audioCtx.createMediaElementSource(rawVideo);
+            const gainNode = audioCtx.createGain();
+            gainNode.gain.value = parseFloat(document.getElementById('volRange').value) / 100;
+            const destNode = audioCtx.createMediaStreamDestination();
+            sourceNode.connect(gainNode);
+            gainNode.connect(destNode);
+            gainNode.connect(audioCtx.destination);
+
+            if (destNode.stream.getAudioTracks().length > 0) {
+                canvasStream.addTrack(destNode.stream.getAudioTracks()[0]);
+            }
+        } catch (e) {
+            console.warn("音訊捕捉受限，切換為純影像導出", e);
+        }
+
+        // 支援格式嗅探
+        let mime = 'video/webm; codecs=vp8';
+        if (MediaRecorder.isTypeSupported('video/mp4; codecs="avc1.42E01E, mp4a.40.2"')) {
+            mime = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+        } else if (MediaRecorder.isTypeSupported('video/mp4')) {
+            mime = 'video/mp4';
+        } else if (MediaRecorder.isTypeSupported('video/webm')) {
+            mime = 'video/webm';
         }
 
         const bitrate = parseInt(document.getElementById('bitrateRange').value) * 1000;
-        let mime = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
-        if (!MediaRecorder.isTypeSupported(mime)) mime = 'video/webm; codecs=vp8,opus';
-
         const recorder = new MediaRecorder(canvasStream, { mimeType: mime, videoBitsPerSecond: bitrate });
         const chunks = [];
-        recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+
+        recorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) {
+                chunks.push(e.data);
+            }
+        };
 
         let isFinished = false;
         function finishRecording() {
             if (isFinished) return;
             isFinished = true;
-            if (recorder.state !== 'inactive') {
+            if (recorder.state === 'recording') {
+                recorder.requestData();
                 recorder.stop();
             }
         }
 
         recorder.onstop = () => {
-            const blob = new Blob(chunks, { type: recorder.mimeType });
+            const ext = mime.includes('mp4') ? 'mp4' : 'webm';
+            const blob = new Blob(chunks, { type: mime });
             const url = URL.createObjectURL(blob);
             const link = document.getElementById('downloadLink');
             const sizeMb = (blob.size / (1024 * 1024)).toFixed(1);
 
             link.href = url;
-            link.download = `focus_cut_${outH}p_${sizeMb}MB.${mime.includes('mp4') ? 'mp4' : 'webm'}`;
+            link.download = `output_${outH}p_${sizeMb}MB.${ext}`;
             link.innerText = `💾 下載已裁切壓縮片 (${sizeMb} MB)`;
 
             downloadBox.style.display = 'block';
-            statusTxt.innerText = `完成！輸出大小為 ${sizeMb} MB！`;
+            statusTxt.innerText = `導出完成！大小為 ${sizeMb} MB！`;
             startBtn.disabled = false;
         };
 
         const zoom = parseFloat(document.getElementById('zoomRange').value);
         const panX = parseFloat(document.getElementById('panXRange').value);
         const panY = parseFloat(document.getElementById('panYRange').value);
-
         const vW = rawVideo.videoWidth;
         const vH = rawVideo.videoHeight;
 
@@ -312,10 +329,16 @@
 
         rawVideo.currentTime = 0;
         rawVideo.muted = false;
-        await rawVideo.play();
-        recorder.start();
+        
+        try {
+            await rawVideo.play();
+        } catch (err) {
+            rawVideo.muted = true;
+            await rawVideo.play();
+        }
 
-        // 綁定結束事件
+        recorder.start(500); // 每 500ms 強制寫入一次 chunk，防止空包彈
+
         rawVideo.onended = () => {
             finishRecording();
         };
@@ -328,14 +351,12 @@
 
                 const prog = Math.min(100, Math.round((rawVideo.currentTime / videoDuration) * 100));
                 barFill.style.width = prog + '%';
-                statusTxt.innerText = `重繪裁切中... ${prog}% (${Math.round(rawVideo.currentTime)}s / ${Math.round(videoDuration)}s)`;
-                
-                // 額外保險：如果時間已經走到結尾
-                if (rawVideo.currentTime >= videoDuration - 0.2) {
+                statusTxt.innerText = `重繪中... ${prog}% (${Math.round(rawVideo.currentTime)}s / ${Math.round(videoDuration)}s)`;
+
+                if (rawVideo.currentTime >= videoDuration - 0.25) {
                     finishRecording();
                     return;
                 }
-
                 requestAnimationFrame(drawFrame);
             } else if (rawVideo.ended) {
                 finishRecording();
