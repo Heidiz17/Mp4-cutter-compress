@@ -13,23 +13,22 @@
         .upload-zone { border: 2px dashed #3a3f68; border-radius: 8px; padding: 16px; text-align: center; cursor: pointer; margin-bottom: 12px; background: #0d0f1a; font-size: 12px; }
         input[type="file"] { display: none; }
 
-        /* 實時取景監視器（所見即所得） */
+        /* 實時取景監視器（固定外框比例，居中對齊） */
         .viewport-wrapper {
             position: relative;
-            width: 100%;
-            height: 380px;
+            width: 240px;
+            height: 426px;
+            margin: 0 auto 12px auto;
             background: #000;
             border-radius: 8px;
             overflow: hidden;
             display: flex;
             align-items: center;
             justify-content: center;
-            margin-bottom: 12px;
             border: 2px solid #00ffcc;
             box-shadow: 0 0 20px rgba(0, 255, 204, 0.2);
         }
 
-        /* 影片容器：用 CSS 實時模擬 Pan & Zoom */
         #videoContainer {
             position: relative;
             width: 100%;
@@ -42,6 +41,9 @@
 
         #rawVideo {
             position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: contain; /* 保證原汁原味全畫面展示，不強制外拉放大 */
             transform-origin: center center;
             will-change: transform;
         }
@@ -96,26 +98,25 @@
             <label>最終輸出比例：</label>
             <select id="aspectSelect" onchange="changeOutputAspect()">
                 <option value="9-16" selected>📱 9:16 (直倒手機 / 舞台專用)</option>
-                <option value="16-9">🖥️️ 16:9 (橫向屏幕)</option>
+                <option value="16-9">🖥 16:9 (橫向屏幕)</option>
                 <option value="1-1">⏹️ 1:1 (正方形)</option>
             </select>
         </div>
         <div class="row">
             <label>輸出規格：</label>
             <select id="resSelect">
-                <option value="640">640p (超極限縮小，幾 MB 搞掂)</option>
-                <option value="720" selected>720p (推薦！清晰且檔案細)</option>
-                <option value="1080">1080p (高畫質)</option>
+                <option value="720">720p (推薦！清晰且檔案細)</option>
+                <option value="1080" selected>1080p (超清大畫面)</option>
             </select>
         </div>
     </div>
 
-    <!-- 手動剪裁與放大控制項（剪走側邊無用嘢） -->
+    <!-- 手動剪裁與放大控制項 -->
     <div class="control-group">
         <div style="font-weight:bold; color:#00ffcc; margin-bottom:6px;">🔍 鏡頭縮放與畫面剪裁（剪 Q 側邊）：</div>
         <div class="row">
-            <label>🔎 放大倍數 (Zoom):</label>
-            <input type="range" id="zoomRange" min="1.0" max="3.5" step="0.05" value="1.0" oninput="updateFrameTransform()">
+            <label>🔎 縮放倍數 (Zoom):</label>
+            <input type="range" id="zoomRange" min="0.3" max="3.5" step="0.05" value="1.0" oninput="updateFrameTransform()">
             <span class="val" id="valZoom">1.00x</span>
         </div>
         <div class="row">
@@ -139,8 +140,8 @@
         </div>
         <div class="row">
             <label>📦 壓縮強度 (Bitrate):</label>
-            <input type="range" id="bitrateRange" min="500" max="2500" step="100" value="900" oninput="document.getElementById('valBitrate').innerText = this.value + 'k'">
-            <span class="val" id="valBitrate">900k</span>
+            <input type="range" id="bitrateRange" min="500" max="4000" step="100" value="2500" oninput="document.getElementById('valBitrate').innerText = this.value + 'k'">
+            <span class="val" id="valBitrate">2500k</span>
         </div>
     </div>
 
@@ -152,7 +153,7 @@
     </div>
 
     <div class="download-box" id="downloadBox">
-        <a id="downloadLink" class="btn-download" download="cropped_small.mp4">💾 下載已剪裁壓縮檔案</a>
+        <a id="downloadLink" class="btn-download" download="focus_cut_1080p.mp4">💾 下載已剪裁壓縮檔案</a>
     </div>
 </div>
 
@@ -187,10 +188,10 @@
             wrap.style.height = '426px';
         } else if (val === '16-9') {
             wrap.style.width = '100%';
-            wrap.style.height = '240px';
+            wrap.style.height = '200px';
         } else {
-            wrap.style.width = '300px';
-            wrap.style.height = '300px';
+            wrap.style.width = '260px';
+            wrap.style.height = '260px';
         }
         updateFrameTransform();
     }
@@ -209,7 +210,6 @@
         document.getElementById('valPanX').innerText = panX + 'px';
         document.getElementById('valPanY').innerText = panY + 'px';
 
-        // 預覽即時渲染：模仿取景框
         rawVideo.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
     }
 
@@ -226,17 +226,16 @@
         progressBox.style.display = 'block';
         downloadBox.style.display = 'none';
 
-        // 1. 設定輸出長寬
         const aspect = document.getElementById('aspectSelect').value;
         const targetRes = parseInt(document.getElementById('resSelect').value);
         let outW, outH;
 
         if (aspect === '9-16') {
-            outH = targetRes;
-            outW = Math.round(targetRes * (9 / 16));
+            outH = targetRes === 1080 ? 1920 : targetRes;
+            outW = targetRes === 1080 ? 1080 : Math.round(targetRes * (9 / 16));
         } else if (aspect === '16-9') {
-            outW = targetRes;
-            outH = Math.round(targetRes * (9 / 16));
+            outW = targetRes === 1080 ? 1920 : Math.round(targetRes * (16 / 9));
+            outH = targetRes === 1080 ? 1080 : targetRes;
         } else {
             outW = targetRes;
             outH = targetRes;
@@ -248,7 +247,6 @@
         cropCanvas.width = outW;
         cropCanvas.height = outH;
 
-        // 2. 音訊節點
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         const sourceNode = audioCtx.createMediaElementSource(rawVideo);
         const gainNode = audioCtx.createGain();
@@ -259,7 +257,6 @@
         gainNode.connect(destNode);
         gainNode.connect(audioCtx.destination);
 
-        // 3. 錄製器配置
         const canvasStream = cropCanvas.captureStream(30);
         if (destNode.stream.getAudioTracks().length > 0) {
             canvasStream.addTrack(destNode.stream.getAudioTracks()[0]);
@@ -280,15 +277,14 @@
             const sizeMb = (blob.size / (1024 * 1024)).toFixed(1);
 
             link.href = url;
-            link.download = `focus_cut_${sizeMb}MB.${mime.includes('mp4') ? 'mp4' : 'webm'}`;
+            link.download = `focus_cut_${outH}p_${sizeMb}MB.${mime.includes('mp4') ? 'mp4' : 'webm'}`;
             link.innerText = `💾 下載已裁切壓縮片 (${sizeMb} MB)`;
 
             downloadBox.style.display = 'block';
-            statusTxt.innerText = `完成！已成功剪裁並壓縮為 ${sizeMb} MB！`;
+            statusTxt.innerText = `完成！輸出大小為 ${sizeMb} MB！`;
             startBtn.disabled = false;
         };
 
-        // 4. 計算數學畫布剪裁映射 (精確將預覽平移轉換為真實像素)
         const zoom = parseFloat(document.getElementById('zoomRange').value);
         const panX = parseFloat(document.getElementById('panXRange').value);
         const panY = parseFloat(document.getElementById('panYRange').value);
@@ -296,12 +292,11 @@
         const vW = rawVideo.videoWidth;
         const vH = rawVideo.videoHeight;
 
-        // 計算基準填充比例
-        const scaleBase = Math.max(outW / vW, outH / vH);
+        // 以 contain 基準配合 Zoom 運算，精確映射畫布像素
+        const scaleBase = Math.min(outW / vW, outH / vH);
         const drawW = vW * scaleBase * zoom;
         const drawH = vH * scaleBase * zoom;
 
-        // 視窗平移換算
         const previewWrapW = wrap.clientWidth;
         const ratioScreenToCanvas = outW / previewWrapW;
         const drawX = (outW - drawW) / 2 + (panX * ratioScreenToCanvas);
