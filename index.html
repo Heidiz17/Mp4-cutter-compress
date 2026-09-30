@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>自由取景・MP4 剪裁壓縮神器</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background: #080912; color: #fff; padding: 14px; display: flex; flex-direction: column; align-items: center; }
+        .container { width: 100%; max-width: 460px; background: #141624; border: 1px solid #2b2e4a; border-radius: 12px; padding: 14px; }
+        h2 { font-size: 15px; color: #00ffcc; margin-bottom: 10px; display: flex; justify-content: space-between; }
+        
+        .upload-zone { border: 2px dashed #3a3f68; border-radius: 8px; padding: 16px; text-align: center; cursor: pointer; margin-bottom: 12px; background: #0d0f1a; font-size: 12px; }
+        input[type="file"] { display: none; }
+
+        /* 實時取景監視器（所見即所得） */
+        .viewport-wrapper {
+            position: relative;
+            width: 100%;
+            height: 380px;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 12px;
+            border: 2px solid #00ffcc;
+            box-shadow: 0 0 20px rgba(0, 255, 204, 0.2);
+        }
+
+        /* 影片容器：用 CSS 實時模擬 Pan & Zoom */
+        #videoContainer {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        #rawVideo {
+            position: absolute;
+            transform-origin: center center;
+            will-change: transform;
+        }
+
+        canvas { display: none; }
+
+        .control-group { background: #1b1e33; padding: 10px; border-radius: 8px; margin-bottom: 8px; font-size: 11.5px; }
+        .row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+        .row:last-child { margin-bottom: 0; }
+        label { color: #bbb; }
+        span.val { color: #00ffcc; font-family: monospace; font-weight: bold; width: 55px; text-align: right; }
+        input[type="range"] { flex: 1; margin: 0 8px; accent-color: #00ffcc; }
+        select { background: #0c0d18; color: #ffd700; border: 1px solid #ffd700; padding: 3px 6px; border-radius: 4px; font-size: 11px; }
+
+        .btn-action { width: 100%; padding: 12px; font-size: 14px; font-weight: 900; border: none; border-radius: 8px; cursor: pointer; }
+        .btn-convert { background: linear-gradient(90deg, #00ffcc, #0088ff); color: #000; margin-top: 6px; }
+        .btn-convert:disabled { background: #333; color: #777; cursor: not-allowed; }
+        
+        #progress-box { margin-top: 10px; display: none; }
+        .bar-bg { width: 100%; height: 8px; background: #090a12; border-radius: 4px; overflow: hidden; }
+        .bar-fill { width: 0%; height: 100%; background: #00ffcc; }
+        #status-txt { font-size: 11px; color: #aaa; text-align: center; margin-top: 4px; font-family: monospace; }
+        
+        .download-box { margin-top: 10px; display: none; }
+        .btn-download { display: block; width: 100%; text-align: center; padding: 12px; background: #ff0055; color: #fff; border-radius: 8px; text-decoration: none; font-weight: 900; font-size: 13px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>
+        <span>🎯 手動取景框・影片壓縮導出</span>
+        <span style="font-size: 10px; color: #ffd700; border: 1px solid #ffd700; padding: 1px 4px; border-radius: 4px;">純本地無上載</span>
+    </h2>
+
+    <div class="upload-zone" onclick="document.getElementById('videoInput').click()">
+        <p id="uploadPrompt">📁 點擊選取你二百幾 MB 嘅 MP4 影片</p>
+        <input type="file" id="videoInput" accept="video/*" onchange="handleVideoUpload(event)">
+    </div>
+
+    <!-- 實時預覽監視器 -->
+    <div class="viewport-wrapper" id="viewportWrap">
+        <div id="videoContainer">
+            <video id="rawVideo" playsinline loop controls></video>
+        </div>
+        <canvas id="cropCanvas"></canvas>
+    </div>
+
+    <!-- 剪裁形狀與解析度 -->
+    <div class="control-group">
+        <div class="row">
+            <label>最終輸出比例：</label>
+            <select id="aspectSelect" onchange="changeOutputAspect()">
+                <option value="9-16" selected>📱 9:16 (直倒手機 / 舞台專用)</option>
+                <option value="16-9">🖥️️ 16:9 (橫向屏幕)</option>
+                <option value="1-1">⏹️ 1:1 (正方形)</option>
+            </select>
+        </div>
+        <div class="row">
+            <label>輸出規格：</label>
+            <select id="resSelect">
+                <option value="640">640p (超極限縮小，幾 MB 搞掂)</option>
+                <option value="720" selected>720p (推薦！清晰且檔案細)</option>
+                <option value="1080">1080p (高畫質)</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- 手動剪裁與放大控制項（剪走側邊無用嘢） -->
+    <div class="control-group">
+        <div style="font-weight:bold; color:#00ffcc; margin-bottom:6px;">🔍 鏡頭縮放與畫面剪裁（剪 Q 側邊）：</div>
+        <div class="row">
+            <label>🔎 放大倍數 (Zoom):</label>
+            <input type="range" id="zoomRange" min="1.0" max="3.5" step="0.05" value="1.0" oninput="updateFrameTransform()">
+            <span class="val" id="valZoom">1.00x</span>
+        </div>
+        <div class="row">
+            <label>↔️ 左右平移 (Pan X):</label>
+            <input type="range" id="panXRange" min="-500" max="500" value="0" oninput="updateFrameTransform()">
+            <span class="val" id="valPanX">0px</span>
+        </div>
+        <div class="row">
+            <label>↕️ 上下平移 (Pan Y):</label>
+            <input type="range" id="panYRange" min="-500" max="500" value="0" oninput="updateFrameTransform()">
+            <span class="val" id="valPanY">0px</span>
+        </div>
+    </div>
+
+    <!-- 音量與壓製碼率 -->
+    <div class="control-group">
+        <div class="row">
+            <label>🔊 影片音量 (Volume):</label>
+            <input type="range" id="volRange" min="0" max="200" value="100" oninput="updateVol(this.value)">
+            <span class="val" id="valVol">100%</span>
+        </div>
+        <div class="row">
+            <label>📦 壓縮強度 (Bitrate):</label>
+            <input type="range" id="bitrateRange" min="500" max="2500" step="100" value="900" oninput="document.getElementById('valBitrate').innerText = this.value + 'k'">
+            <span class="val" id="valBitrate">900k</span>
+        </div>
+    </div>
+
+    <button class="btn-action btn-convert" id="startBtn" onclick="renderAndCompress()" disabled>🚀 鎖定框框・開始重繪並壓縮導出</button>
+
+    <div id="progress-box">
+        <div class="bar-bg"><div class="bar-fill" id="barFill"></div></div>
+        <div id="status-txt">準備中...</div>
+    </div>
+
+    <div class="download-box" id="downloadBox">
+        <a id="downloadLink" class="btn-download" download="cropped_small.mp4">💾 下載已剪裁壓縮檔案</a>
+    </div>
+</div>
+
+<script>
+    let videoDuration = 0;
+    const rawVideo = document.getElementById('rawVideo');
+    const cropCanvas = document.getElementById('cropCanvas');
+    const ctx = cropCanvas.getContext('2d');
+    const wrap = document.getElementById('viewportWrap');
+
+    function handleVideoUpload(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
+        document.getElementById('uploadPrompt').innerText = `✅ 已載入: ${file.name} (${sizeMb} MB)`;
+
+        rawVideo.src = URL.createObjectURL(file);
+        rawVideo.load();
+        rawVideo.onloadedmetadata = () => {
+            videoDuration = rawVideo.duration;
+            document.getElementById('startBtn').disabled = false;
+            changeOutputAspect();
+            updateFrameTransform();
+        };
+    }
+
+    function changeOutputAspect() {
+        const val = document.getElementById('aspectSelect').value;
+        if (val === '9-16') {
+            wrap.style.width = '240px';
+            wrap.style.height = '426px';
+        } else if (val === '16-9') {
+            wrap.style.width = '100%';
+            wrap.style.height = '240px';
+        } else {
+            wrap.style.width = '300px';
+            wrap.style.height = '300px';
+        }
+        updateFrameTransform();
+    }
+
+    function updateVol(val) {
+        document.getElementById('valVol').innerText = val + '%';
+        rawVideo.volume = Math.min(1.0, val / 100);
+    }
+
+    function updateFrameTransform() {
+        const zoom = parseFloat(document.getElementById('zoomRange').value);
+        const panX = parseFloat(document.getElementById('panXRange').value);
+        const panY = parseFloat(document.getElementById('panYRange').value);
+
+        document.getElementById('valZoom').innerText = zoom.toFixed(2) + 'x';
+        document.getElementById('valPanX').innerText = panX + 'px';
+        document.getElementById('valPanY').innerText = panY + 'px';
+
+        // 預覽即時渲染：模仿取景框
+        rawVideo.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+    }
+
+    async function renderAndCompress() {
+        if (!videoDuration) return;
+
+        const startBtn = document.getElementById('startBtn');
+        const progressBox = document.getElementById('progress-box');
+        const barFill = document.getElementById('barFill');
+        const statusTxt = document.getElementById('status-txt');
+        const downloadBox = document.getElementById('downloadBox');
+
+        startBtn.disabled = true;
+        progressBox.style.display = 'block';
+        downloadBox.style.display = 'none';
+
+        // 1. 設定輸出長寬
+        const aspect = document.getElementById('aspectSelect').value;
+        const targetRes = parseInt(document.getElementById('resSelect').value);
+        let outW, outH;
+
+        if (aspect === '9-16') {
+            outH = targetRes;
+            outW = Math.round(targetRes * (9 / 16));
+        } else if (aspect === '16-9') {
+            outW = targetRes;
+            outH = Math.round(targetRes * (9 / 16));
+        } else {
+            outW = targetRes;
+            outH = targetRes;
+        }
+
+        outW = outW % 2 === 0 ? outW : outW + 1;
+        outH = outH % 2 === 0 ? outH : outH + 1;
+
+        cropCanvas.width = outW;
+        cropCanvas.height = outH;
+
+        // 2. 音訊節點
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const sourceNode = audioCtx.createMediaElementSource(rawVideo);
+        const gainNode = audioCtx.createGain();
+        gainNode.gain.value = parseFloat(document.getElementById('volRange').value) / 100;
+        
+        const destNode = audioCtx.createMediaStreamDestination();
+        sourceNode.connect(gainNode);
+        gainNode.connect(destNode);
+        gainNode.connect(audioCtx.destination);
+
+        // 3. 錄製器配置
+        const canvasStream = cropCanvas.captureStream(30);
+        if (destNode.stream.getAudioTracks().length > 0) {
+            canvasStream.addTrack(destNode.stream.getAudioTracks()[0]);
+        }
+
+        const bitrate = parseInt(document.getElementById('bitrateRange').value) * 1000;
+        let mime = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+        if (!MediaRecorder.isTypeSupported(mime)) mime = 'video/webm; codecs=vp8,opus';
+
+        const recorder = new MediaRecorder(canvasStream, { mimeType: mime, videoBitsPerSecond: bitrate });
+        const chunks = [];
+        recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+
+        recorder.onstop = () => {
+            const blob = new Blob(chunks, { type: recorder.mimeType });
+            const url = URL.createObjectURL(blob);
+            const link = document.getElementById('downloadLink');
+            const sizeMb = (blob.size / (1024 * 1024)).toFixed(1);
+
+            link.href = url;
+            link.download = `focus_cut_${sizeMb}MB.${mime.includes('mp4') ? 'mp4' : 'webm'}`;
+            link.innerText = `💾 下載已裁切壓縮片 (${sizeMb} MB)`;
+
+            downloadBox.style.display = 'block';
+            statusTxt.innerText = `完成！已成功剪裁並壓縮為 ${sizeMb} MB！`;
+            startBtn.disabled = false;
+        };
+
+        // 4. 計算數學畫布剪裁映射 (精確將預覽平移轉換為真實像素)
+        const zoom = parseFloat(document.getElementById('zoomRange').value);
+        const panX = parseFloat(document.getElementById('panXRange').value);
+        const panY = parseFloat(document.getElementById('panYRange').value);
+
+        const vW = rawVideo.videoWidth;
+        const vH = rawVideo.videoHeight;
+
+        // 計算基準填充比例
+        const scaleBase = Math.max(outW / vW, outH / vH);
+        const drawW = vW * scaleBase * zoom;
+        const drawH = vH * scaleBase * zoom;
+
+        // 視窗平移換算
+        const previewWrapW = wrap.clientWidth;
+        const ratioScreenToCanvas = outW / previewWrapW;
+        const drawX = (outW - drawW) / 2 + (panX * ratioScreenToCanvas);
+        const drawY = (outH - drawH) / 2 + (panY * ratioScreenToCanvas);
+
+        rawVideo.currentTime = 0;
+        rawVideo.muted = false;
+        await rawVideo.play();
+        recorder.start();
+
+        function drawFrame() {
+            if (!rawVideo.paused && !rawVideo.ended) {
+                ctx.fillStyle = "#000";
+                ctx.fillRect(0, 0, outW, outH);
+                ctx.drawImage(rawVideo, drawX, drawY, drawW, drawH);
+
+                const prog = Math.min(100, Math.round((rawVideo.currentTime / videoDuration) * 100));
+                barFill.style.width = prog + '%';
+                statusTxt.innerText = `重繪裁切中... ${prog}% (${Math.round(rawVideo.currentTime)}s / ${Math.round(videoDuration)}s)`;
+                requestAnimationFrame(drawFrame);
+            } else if (rawVideo.ended) {
+                recorder.stop();
+            }
+        }
+        drawFrame();
+    }
+</script>
+</body>
+</html>
